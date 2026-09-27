@@ -1,0 +1,112 @@
+#!/usr/bin/env python3
+
+import math
+
+import rclpy
+from geometry_msgs.msg import Twist
+from rclpy.node import Node
+
+
+class RectangleMover(Node):
+    def __init__(self):
+        super().__init__('rectangle_mover')
+
+        # Ukuran dan kecepatan robot.
+        self.sisi_panjang = 4.0       # meter
+        self.sisi_pendek = 2.0        # meter
+        self.kecepatan_maju = 0.30    # meter/detik
+        self.kecepatan_putar = 0.50   # radian/detik
+        self.jeda = 0.25              # detik
+
+        self.publisher = self.create_publisher(Twist, '/cmd_vel', 10)
+
+        durasi_panjang = self.sisi_panjang / self.kecepatan_maju
+        durasi_pendek = self.sisi_pendek / self.kecepatan_maju
+        durasi_putar = (math.pi / 2.0) / self.kecepatan_putar
+
+        # Urutan gerakan sama seperti pada video.
+        self.gerakan = [
+            ('Maju sisi panjang 2', 'maju', durasi_panjang),
+            ('Rotasi 90 derajat 1', 'putar', durasi_putar),
+            ('Maju sisi pendek 4', 'maju', durasi_pendek),
+            ('Rotasi 90 derajat 2', 'putar', durasi_putar),
+            ('Maju sisi panjang 2', 'maju', durasi_panjang),
+            ('Rotasi 90 derajat 3', 'putar', durasi_putar),
+            ('Maju sisi pendek 4', 'maju', durasi_pendek),
+            ('Rotasi 90 derajat terakhir', 'putar', durasi_putar),
+        ]
+
+        self.indeks = 0
+        self.sedang_jeda = False
+        self.selesai = False
+        self.waktu_mulai = self.get_clock().now()
+
+        # Callback dijalankan 20 kali per detik.
+        self.timer = self.create_timer(0.05, self.kontrol_robot)
+        self.get_logger().info(self.gerakan[0][0])
+
+    def kontrol_robot(self):
+        if self.selesai:
+            return
+
+        sekarang = self.get_clock().now()
+        waktu_berjalan = (sekarang - self.waktu_mulai).nanoseconds / 1e9
+
+        if self.sedang_jeda:
+            self.berhenti()
+
+            if waktu_berjalan < self.jeda:
+                return
+
+            self.sedang_jeda = False
+            self.waktu_mulai = sekarang
+            waktu_berjalan = 0.0
+            self.get_logger().info(self.gerakan[self.indeks][0])
+
+        nama, jenis, durasi = self.gerakan[self.indeks]
+
+        if waktu_berjalan < durasi:
+            perintah = Twist()
+
+            if jenis == 'maju':
+                perintah.linear.x = self.kecepatan_maju
+            elif jenis == 'putar':
+                # Nilai positif membuat robot berputar ke kiri.
+                perintah.angular.z = self.kecepatan_putar
+
+            self.publisher.publish(perintah)
+            return
+
+        self.berhenti()
+        self.indeks += 1
+
+        if self.indeks >= len(self.gerakan):
+            self.selesai = True
+            self.get_logger().info(
+                'Lintasan persegi panjang selesai. Robot berhenti.'
+            )
+            return
+
+        self.sedang_jeda = True
+        self.waktu_mulai = sekarang
+
+    def berhenti(self):
+        self.publisher.publish(Twist())
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    node = RectangleMover()
+
+    try:
+        rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        node.berhenti()
+        node.destroy_node()
+        rclpy.shutdown()
+
+
+if __name__ == '__main__':
+    main()
